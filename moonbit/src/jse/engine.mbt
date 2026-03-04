@@ -3,8 +3,8 @@
 /// Supported features:
 /// - literals: Null / Bool / Number / String / Array / Object
 /// - logical operators: $and / $or / $not
-/// - $quote and $expr
-/// $pattern / $query are not yet implemented in this minimal version.
+/// - $quote, $expr
+/// - $pattern, $query (SQL generation, same shape as other runtimes)
 
 fn is_symbol(s : String) -> Bool {
   s.has_prefix("$") && !s.has_prefix("$$")
@@ -105,13 +105,89 @@ fn eval_s_expr(sym : String, args : Array[Json]) -> Json {
         (!b).to_json()
       }
 
-      "$expr" => match evaled.get(0) {
-        Some(v) => v
-        None => "".to_json()
+      "$expr" => {
+        match evaled.get(0) {
+          Some(String(cond)) => build_select(cond).to_json()
+          Some(v) => v
+          None => "".to_json()
+        }
+      }
+
+      "$pattern" => {
+        let cond = eval_pattern(evaled)
+        cond.to_json()
+      }
+
+      "$query" => {
+        let sql = eval_query(args)
+        sql.to_json()
       }
 
       _ => "".to_json()
     }
   }
 }
+
+const QUERY_FIELDS : String = "subject, predicate, object, meta"
+
+fn build_select(cond : String) -> String {
+  "select \n    subject, predicate, object, meta \nfrom statement as s \nwhere \{cond} \noffset 0\nlimit 100 \n"
+}
+
+fn pattern_to_triple(subject : String, predicate : String, object : String) -> Array[String] {
+  let triple = Array::new()
+  if subject == "$*" && object == "$*" {
+    triple.push(predicate)
+  } else {
+    triple.push(subject)
+    triple.push(predicate)
+    triple.push(object)
+  }
+  triple
+}
+
+fn triple_to_sql_condition(triple : Array[String]) -> String {
+  let json = {
+    "triple": triple.map(String::to_json),
+  }
+  let s = json.to_string()
+  "meta @> '\{s}'"
+}
+
+fn eval_pattern(args : Array[Json]) -> String {
+  let subject = match args.get(0) {
+    Some(String(s)) => s
+    _ => "$*"
+  }
+  let predicate = match args.get(1) {
+    Some(String(s)) => s
+    _ => ""
+  }
+  let object = match args.get(2) {
+    Some(String(s)) => s
+    _ => "$*"
+  }
+  let triple = pattern_to_triple(subject, predicate, object)
+  triple_to_sql_condition(triple)
+}
+
+fn eval_query(args : Array[Json]) -> String {
+  let patterns = match args.get(1) {
+    Some(Array(arr)) => arr
+    _ => Array::new()
+  }
+  let conds = Array::new()
+  for p in patterns {
+    match p {
+      Array(arr) => {
+        let cond = eval_pattern(arr)
+        conds.push(cond)
+      }
+      _ => ()
+    }
+  }
+  let where_clause = conds.join(" and \n    ")
+  "select \{QUERY_FIELDS} \nfrom statement \nwhere \n    \{where_clause} \noffset 0\nlimit 100 \n"
+}
+
 
