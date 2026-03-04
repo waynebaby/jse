@@ -190,6 +190,7 @@ Implementations are available in several languages:
 - **TypeScript/JavaScript**: `jse-engine`
 - **Java**: `jse4j`
 - **Rust**: `jse`
+- **Go**: `github.com/MarchLiu/jse/gojse`
 
 #### Python (PyPI)
 
@@ -232,6 +233,12 @@ implementation("io.github.marchliu:jse4j:0.1.0")
 ```toml
 [dependencies]
 jse = "0.1"
+```
+
+#### Go (modules)
+
+```bash
+go get github.com/MarchLiu/jse/gojse@v0.1.0
 ```
 
 ### Examples and Implementations

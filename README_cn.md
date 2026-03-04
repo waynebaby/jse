@@ -189,6 +189,8 @@ JSE：
 - **Python**：`pyjse`
 - **TypeScript/JavaScript**：`jse-engine`
 - **Java**：`jse4j`
+- **Rust**：`jse`
+- **Go**：`github.com/MarchLiu/jse/gojse`
 
 #### Python（PyPI）
 
@@ -226,6 +228,21 @@ Gradle Kotlin:
 implementation("io.github.marchliu:jse4j:0.1.0")
 ```
 
+#### Rust（crates.io）
+
+在 `Cargo.toml` 中添加：
+
+```toml
+[dependencies]
+jse = "0.1"
+```
+
+#### Go（Go Modules）
+
+```bash
+go get github.com/MarchLiu/jse/gojse@v0.1.0
+```
+
 ### 示例与实现
 
 仓库中包含：
@@ -233,6 +250,8 @@ implementation("io.github.marchliu:jse4j:0.1.0")
 * Python 示例与解释器：`python/pyjse`
 * TypeScript 示例与解释器：`typescript/`
 * Java 示例与解释器：`java/`
+* Rust 库：`rust/`
+* Go 库：`gojse/`
 * 后续还可以补充 JSON Schema 与更复杂的 DSL 示例
 
 ---
