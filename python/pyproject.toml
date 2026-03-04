@@ -1,0 +1,50 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "pyjse"
+version = "0.1.0"
+description = "JSE (JSON Structural Expression) interpreter for Python"
+readme = "README.md"
+license = { text = "MIT" }
+requires-python = ">=3.10"
+keywords = ["jse", "json", "s-expression", "interpreter"]
+authors = [
+    { name = "marsliu", email = "mars.liu@outlook.com" }
+]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Software Development :: Interpreters",
+]
+dependencies = []
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.0",
+]
+
+[project.urls]
+Homepage = "https://github.com/MarchLiu/jse"
+Repository = "https://github.com/MarchLiu/jse"
+Documentation = "https://github.com/MarchLiu/jse#readme"
+
+[tool.hatch.build.targets.wheel]
+packages = ["pyjse"]
+
+[tool.hatch.build.targets.sdist]
+include = [
+    "/pyjse",
+    "/tests",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
+addopts = "-v"
