@@ -206,4 +206,6 @@ marimo/_static/
 marimo/_lsp/
 __marimo__/
 .vscode/
-moonbit/_build//.bloop/
+moonbit/_build/
+.bloop/
+.claude/settings.local.json
