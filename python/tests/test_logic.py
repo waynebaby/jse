@@ -1,11 +1,16 @@
 import pytest
 from pyjse import Engine, ExpressionEnv
+from pyjse.functors.builtin import BUILTIN_FUNCTORS
+from pyjse.functors.utils import UTILS_FUNCTORS
 
 
 @pytest.fixture
 def engine():
     env = ExpressionEnv()
-    return Engine(env)
+    env.load(BUILTIN_FUNCTORS)
+    env.load(UTILS_FUNCTORS)
+    engine = Engine(env)
+    return engine
 
 
 def test_and_basic(engine):

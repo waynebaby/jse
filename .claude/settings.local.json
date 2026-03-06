@@ -1,7 +1,16 @@
 {
   "permissions": {
     "allow": [
-      "Write"
+      "Write",
+      "mcp__zread__get_repo_structure",
+      "mcp__zread__search_doc",
+      "mcp__web-reader__webReader",
+      "mcp__zread__read_file",
+      "mcp__web-search-prime__webSearchPrime",
+      "Bash(xargs:*)",
+      "Bash(find:*)",
+      "Bash(python -c:*)",
+      "Bash(python3 -c:*)"
     ]
   }
 }
