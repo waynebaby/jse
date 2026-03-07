@@ -75,7 +75,7 @@ Functors are organized into modules:
 | **builtin** | Core operators | `$quote`, `$eq`, `$cond`, `$head`, `$tail`, `$atom?`, `$cons` |
 | **utils** | Utility functions | `$not`, `$list?`, `$map?`, `$null?`, `$get`, `$set`, `$del`, `$conj`, `$and`, `$or` |
 | **lisp** | Lisp enhancements | `$def`, `$defn`, `$lambda` |
-| **sql** | SQL generation | `$pattern`, `$query`, `$expr` |
+
 
 ---
 
@@ -202,11 +202,8 @@ Represents anonymous functions with closure support.
 
 ### 5.4 SQL Operators
 
-| Operator | Description | Example |
-|----------|-------------|---------|
-| `$pattern` | Create SQL pattern | `["$pattern", "subject", "predicate", "object"]` |
-| `$query` | Build SQL query | `["$query", ["$and", patterns]]` |
-| `$expr` | Evaluate expression | `["$expr", expression]` |
+The SQL module is not a utility module; it is only used to demonstrate that functors with the same name may have completely different behaviors in different scopes.
+
 
 ---
 
@@ -292,7 +289,7 @@ Implementations MAY:
 
 **Recommended safe set**: builtin + utils (no `$def`, `$defn`, `$eval`)
 
-**Full power set**: builtin + utils + lisp + sql
+**Full power set**: builtin + utils + lisp 
 
 ---
 
