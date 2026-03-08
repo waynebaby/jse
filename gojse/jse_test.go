@@ -113,7 +113,43 @@ func TestQueryBasic(t *testing.T) {
 	e := newEngineWithSQL()
 
 	raw := []byte(`{
-	  "$expr": ["$pattern", "$*", "author of", "$*"]
+	  "$query": ["$quote", ["$pattern", "$*", "author of", "$*"]]
+	}`)
+	var query map[string]interface{}
+	if err := json.Unmarshal(raw, &query); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	v, err := e.Execute(query)
+	if err != nil {
+		t.Fatalf("execute error: %v", err)
+	}
+	sql, ok := v.(string)
+	if !ok {
+		t.Fatalf("expected string sql, got %#v", v)
+	}
+	// Loose checking - look for keywords, not exact format
+	if !strings.Contains(sql, "select") ||
+		!strings.Contains(sql, "subject, predicate, object, meta") ||
+		!strings.Contains(sql, "from statement") ||
+		!strings.Contains(sql, "author of") ||
+		!strings.Contains(sql, "triple") ||
+		!strings.Contains(sql, "offset 0") ||
+		!strings.Contains(sql, "limit 100") {
+		t.Fatalf("sql does not contain expected substrings: %q", sql)
+	}
+}
+
+func TestQueryCombined(t *testing.T) {
+	e := newEngineWithSQL()
+
+	raw := []byte(`{
+	  "$query": {
+	    "$quote": [
+	      "$and",
+	      ["$pattern", "Liu Xin", "author of", "$*"],
+	      ["$pattern", "$*", "author of", "$*"]
+	    ]
+	  }
 	}`)
 	var query map[string]interface{}
 	if err := json.Unmarshal(raw, &query); err != nil {
@@ -129,40 +165,6 @@ func TestQueryBasic(t *testing.T) {
 	}
 	if !strings.Contains(sql, "select") ||
 		!strings.Contains(sql, "subject, predicate, object, meta") ||
-		!strings.Contains(sql, "from statement as s") ||
-		!strings.Contains(sql, "author of") ||
-		!strings.Contains(sql, "triple") ||
-		!strings.Contains(sql, "offset 0") ||
-		!strings.Contains(sql, "limit 100") {
-		t.Fatalf("sql does not contain expected substrings: %q", sql)
-	}
-}
-
-func TestQueryCombined(t *testing.T) {
-	e := newEngineWithSQL()
-
-	raw := []byte(`{
-	  "$query": [
-	    "$and",
-	    [
-	      ["$pattern", "Liu Xin", "author of", "$*"],
-	      ["$pattern", "$*", "author of", "$*"]
-	    ]
-	  ]
-	}`)
-	var query map[string]interface{}
-	if err := json.Unmarshal(raw, &query); err != nil {
-		t.Fatalf("unmarshal: %v", err)
-	}
-	v, err := e.Execute(query)
-	if err != nil {
-		t.Fatalf("execute error: %v", err)
-	}
-	sql, ok := v.(string)
-	if !ok {
-		t.Fatalf("expected string sql, got %#v", v)
-	}
-	if !strings.Contains(sql, "select "+QueryFields) ||
 		!strings.Contains(sql, "from statement") ||
 		!strings.Contains(sql, "Liu Xin") ||
 		!strings.Contains(sql, "author of") ||

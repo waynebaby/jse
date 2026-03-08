@@ -7,15 +7,33 @@ import (
 )
 
 // SQLFunctors contains SQL-related operators.
+// NOTE: ONLY exports $query - the local operators ($pattern, $and, $*)
+// are NOT globally available. They only exist within $query's local scope.
 var SQLFunctors = map[string]Functor{
-	"$pattern": pattern,
-	"$query":   query,
-	"$expr":    expr,
+	"$query": query,
 }
 
-// QueryFields is the SELECT field list used by $pattern / $query.
+// QueryFields is the SELECT field list used by $query.
 const QueryFields = "subject, predicate, object, meta"
 
+// envHelper encapsulates environment operations needed by SQL functors.
+type envHelper interface {
+	EvalJSON(v interface{}) (interface{}, error)
+	Load(functors map[string]Functor)
+}
+
+// parserHelper is the interface for parsing JSON into AST.
+type parserHelper interface {
+	Parse(v interface{}) (node interface{}, err error)
+}
+
+// nodeHelper is the interface for applying an AST node.
+type nodeHelper interface {
+	Apply(env interface{}) (interface{}, error)
+}
+
+// pattern generates SQL WHERE condition for a triple pattern.
+// This is the LOCAL version used inside $query.
 func pattern(env interface{}, args []interface{}) (interface{}, error) {
 	if len(args) < 3 {
 		return "", fmt.Errorf("$pattern requires (subject, predicate, object)")
@@ -31,93 +49,193 @@ func pattern(env interface{}, args []interface{}) (interface{}, error) {
 	if err != nil {
 		return "", err
 	}
-	sql := fmt.Sprintf(
-		"select \n    subject, predicate, object, meta \nfrom statement as s \nwhere %s \noffset 0\nlimit 100 \n",
-		cond,
-	)
-	return sql, nil
+	// Return just the WHERE condition, not a full SELECT
+	return cond, nil
 }
 
-func query(env interface{}, args []interface{}) (interface{}, error) {
-	if len(args) < 1 {
-		return "", fmt.Errorf("$query expects [op, patterns array] or [patterns array]")
-	}
-
-	// Get Env interface
-	envImpl, ok := env.(Env)
+// sqlAnd is SQL-specific AND: joins conditions with " and ".
+// This is LOCAL-ONLY for $query, different from logical $and in utils.go.
+func sqlAnd(env interface{}, args []interface{}) (interface{}, error) {
+	envImpl, ok := env.(envHelper)
 	if !ok {
 		return "", fmt.Errorf("env does not implement EvalJSON")
 	}
 
-	// args[0] is the entire array: [op, patterns] or [patterns]
-	rawValue := args[0]
-	arr, ok := rawValue.([]interface{})
-	if !ok {
-		return "", fmt.Errorf("$query expects an array argument")
-	}
-
-	// Extract patterns array
-	// If first element is a logical operator ($and/$or), extract patterns from second element
-	// Otherwise, use the entire array as patterns
-	var patterns []interface{}
-	if len(arr) >= 2 {
-		if op, ok := arr[0].(string); ok && (op == "$and" || op == "$or") {
-			if p, ok := arr[1].([]interface{}); ok {
-				patterns = p
-			} else {
-				return "", fmt.Errorf("$query %s: second element must be patterns array", op)
-			}
-		} else {
-			// Use entire array as patterns
-			patterns = arr
-		}
-	} else if len(arr) == 1 {
-		// Single pattern - wrap in array
-		patterns = arr
-	} else {
-		return "", fmt.Errorf("$query: empty array")
-	}
-
-	// Evaluate each pattern to get SQL string
-	var conditions []string
-	for _, pattern := range patterns {
-		// Evaluate the pattern expression
-		result, err := envImpl.EvalJSON(pattern)
+	var tokens []string
+	for _, arg := range args {
+		result, err := envImpl.EvalJSON(arg)
 		if err != nil {
-			return "", fmt.Errorf("failed to evaluate pattern: %w", err)
+			return "", fmt.Errorf("failed to evaluate $and argument: %w", err)
 		}
-
 		sql, ok := result.(string)
 		if !ok {
-			return "", fmt.Errorf("pattern must evaluate to SQL string")
+			return "", fmt.Errorf("$and arguments must evaluate to strings")
 		}
-
-		// Extract WHERE clause from SQL
-		if idx := strings.Index(sql, "where "); idx >= 0 {
-			whereStart := idx + 6
-			if idx := strings.Index(sql[whereStart:], " offset"); idx >= 0 {
-				conditions = append(conditions, fmt.Sprintf("(%s)", strings.TrimSpace(sql[whereStart:whereStart+idx])))
-			} else {
-				conditions = append(conditions, sql)
-			}
-		} else {
-			conditions = append(conditions, sql)
-		}
+		tokens = append(tokens, sql)
 	}
-	where := strings.Join(conditions, " and \n    ")
+	return strings.Join(tokens, " and "), nil
+}
+
+// wildcard is the wildcard helper for local scope.
+func wildcard(env interface{}, args []interface{}) (interface{}, error) {
+	return "*", nil
+}
+
+// localSQLFunctors returns local operators for $query scope only.
+func localSQLFunctors() map[string]Functor {
+	return map[string]Functor{
+		"$pattern": pattern,
+		"$and":     sqlAnd,
+		"$*":       wildcard,
+	}
+}
+
+// query generates SQL for multi-pattern query with LOCAL environment.
+// Form: {"$query": condition}
+// where condition is an AST expression with local operators ($pattern, $and, $*)
+func query(env interface{}, args []interface{}) (interface{}, error) {
+	if len(args) < 1 {
+		return "", fmt.Errorf("$query expects a condition expression")
+	}
+
+	// Type assert to get the helper interfaces
+	envHelper, ok := env.(envHelper)
+	if !ok {
+		return "", fmt.Errorf("env does not implement required interface")
+	}
+
+	// Create local evaluation context that has access to local functors
+	localEnv := &localEvalContext{
+		parent: envHelper,
+		local:  localSQLFunctors(),
+	}
+
+	// Evaluate the condition in the local environment
+	result, err := localEnv.EvalJSON(args[0])
+	if err != nil {
+		return "", fmt.Errorf("failed to evaluate query condition: %w", err)
+	}
+
+	whereStr, ok := result.(string)
+	if !ok {
+		return "", fmt.Errorf("query condition must evaluate to string, got %T", result)
+	}
+
 	sql := fmt.Sprintf(
 		"select %s \nfrom statement \nwhere \n    %s \noffset 0\nlimit 100 \n",
 		QueryFields,
-		where,
+		whereStr,
 	)
 	return sql, nil
 }
 
-func expr(env interface{}, args []interface{}) (interface{}, error) {
-	if len(args) == 0 {
-		return nil, nil
+// localEvalContext provides evaluation with local functors available.
+// This simulates local scope by checking local functors first.
+type localEvalContext struct {
+	parent envHelper
+	local  map[string]Functor
+}
+
+// EvalJSON evaluates JSON with local functors taking precedence.
+func (c *localEvalContext) EvalJSON(v interface{}) (interface{}, error) {
+	// Handle object expressions like {"$op": ...} or {"$quote": ...}
+	if m, ok := v.(map[string]interface{}); ok && len(m) == 1 {
+		for key, arg := range m {
+			if key == "$quote" {
+				// $quote returns its argument unevaluated
+				// But we need to continue evaluating if the result is another expression
+				return c.continueEval(arg)
+			}
+			if fn, hasLocal := c.local[key]; hasLocal {
+				// Use local functor
+				return c.applyFunctor(fn, arg)
+			}
+		}
 	}
-	return args[0], nil
+
+	// Handle arrays like ["$op", ...]
+	if arr, ok := v.([]interface{}); ok && len(arr) > 0 {
+		if key, ok := arr[0].(string); ok {
+			if key == "$quote" && len(arr) > 1 {
+				// $quote returns its argument unevaluated
+				// But we need to continue evaluating if the result is another expression
+				return c.continueEval(arr[1])
+			}
+			if fn, hasLocal := c.local[key]; hasLocal {
+				// Use local functor with rest of array as args
+				args := arr[1:]
+				if len(args) == 1 {
+					// Single argument - might be another expression
+					return c.applyFunctor(fn, args[0])
+				}
+				return fn(c, args)
+			}
+		}
+	}
+
+	// Delegate to parent environment for everything else
+	return c.parent.EvalJSON(v)
+}
+
+// continueEval continues evaluating the value until we get a non-expression result.
+// This is needed after $quote to handle nested expressions.
+func (c *localEvalContext) continueEval(v interface{}) (interface{}, error) {
+	// If v is an expression, evaluate it and continue
+	if m, ok := v.(map[string]interface{}); ok && len(m) == 1 {
+		for key, arg := range m {
+			if fn, hasLocal := c.local[key]; hasLocal {
+				result, err := c.applyFunctor(fn, arg)
+				if err != nil {
+					return nil, err
+				}
+				// Continue evaluating if result is another expression
+				return c.continueEval(result)
+			}
+		}
+	}
+	if arr, ok := v.([]interface{}); ok && len(arr) > 0 {
+		if key, ok := arr[0].(string); ok {
+			if fn, hasLocal := c.local[key]; hasLocal {
+				args := arr[1:]
+				var result interface{}
+				var err error
+				if len(args) == 1 {
+					result, err = c.applyFunctor(fn, args[0])
+				} else {
+					result, err = fn(c, args)
+				}
+				if err != nil {
+					return nil, err
+				}
+				// Continue evaluating if result is another expression
+				return c.continueEval(result)
+			}
+		}
+	}
+	// Not an expression, return as-is
+	return v, nil
+}
+
+// applyFunctor applies a functor with the given argument.
+func (c *localEvalContext) applyFunctor(fn Functor, arg interface{}) (interface{}, error) {
+	// Convert arg to args array form
+	var args []interface{}
+	if arr, ok := arg.([]interface{}); ok {
+		args = arr
+	} else {
+		args = []interface{}{arg}
+	}
+	return fn(c, args)
+}
+
+// Load loads functors (for interface compatibility).
+func (c *localEvalContext) Load(functors map[string]Functor) {
+	// Merge into local functors, with local taking precedence
+	for name, fn := range functors {
+		if _, exists := c.local[name]; !exists {
+			c.local[name] = fn
+		}
+	}
 }
 
 // PatternToTriple converts $pattern arguments into a triple slice.
