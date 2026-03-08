@@ -1,17 +1,61 @@
-/// SQL-related functors for JSE.
-
-/// SQL functors map
-pub fn sql_functors() -> Map[String, Functor] {
-  let m = Map::new()
-  let mut m2 = map_put(m, "$pattern", pattern)
-  m2 = map_put(m2, "$query", query)
-  m2 = map_put(m2, "$expr", expr)
-  m2
-}
+/// SQL extension functors for JSE.
+///
+/// Demonstrates local scope: ONLY exports $query globally.
+/// Local operators ($pattern, $and, $*) are ONLY available inside $query's local scope.
 
 /// Query fields constant
 const QUERY_FIELDS : String = "subject, predicate, object, meta"
 
+/// SQL functors map - ONLY exports $query
+pub fn sql_functors() -> Map[String, Functor] {
+  let m = Map::new()
+  map_put(m, "$query", query)
+}
+
+/// Local operators for $query scope only
+fn local_sql_functors() -> Map[String, Functor] {
+  let m = Map::new()
+  let mut m2 = map_put(m, "$pattern", pattern)
+  m2 = map_put(m2, "$and", sql_and)
+  m2 = map_put(m2, "$*", wildcard)
+  m2
+}
+
+/// SQL-specific AND: joins conditions with " and ".
+/// LOCAL-ONLY for $query, different from logical $and in utils.mbt.
+fn sql_and(env : Env, args : Array[JseValue]) -> Result[JseValue, String] {
+  let tokens = Array::new()
+  let mut tokens2 = tokens
+  for arg in args {
+    match eval_json(env, arg) {
+      Ok(result) => {
+        tokens2 = array_push(tokens2, result)
+      }
+      Err(e) => { return Err(e) }
+    }
+  }
+
+  // Convert all tokens to strings and join
+  let strings = Array::new()
+  let mut strings2 = strings
+  for token in tokens2 {
+    match token {
+      JseValue::StringValue(s) => strings2 = array_push(strings2, s)
+      _ => return Err("$and arguments must evaluate to strings")
+    }
+  }
+
+  let joined = strings2.join(" and ")
+  Ok(JseValue::StringValue(joined))
+}
+
+/// Wildcard helper for local scope
+fn wildcard(_env : Env, _args : Array[JseValue]) -> Result[JseValue, String] {
+  Ok(JseValue::StringValue("*"))
+}
+
+/// $pattern functor - Generate SQL WHERE condition for a triple pattern.
+/// This is the LOCAL version used inside $query.
 fn pattern(_env : Env, args : Array[JseValue]) -> Result[JseValue, String] {
   if args.length() < 3 {
     return Err("$pattern requires (subject, predicate, object)")
@@ -33,138 +77,91 @@ fn pattern(_env : Env, args : Array[JseValue]) -> Result[JseValue, String] {
   let triple = pattern_to_triple(subject, predicate, object)
   match triple_to_sql_condition(triple) {
     Ok(cond) => {
-      let sql = "select \n    subject, predicate, object, meta \nfrom statement as s \nwhere " + cond + " \noffset 0\nlimit 100 \n"
-      Ok(JseValue::StringValue(sql))
+      Ok(JseValue::StringValue(cond))
     }
     Err(e) => Err(e)
   }
 }
 
+/// Convert AstError to String
+fn ast_error_to_string(err : AstError) -> String {
+  match err {
+    AstError::SymbolNotFound(s) => "Symbol not found: " + s
+    AstError::TypeError(s) => "Type error: " + s
+    AstError::ArityError(s) => "Arity error: " + s
+    AstError::EvalError(s) => "Eval error: " + s
+  }
+}
+
+/// Build SQL SELECT statement
+fn build_sql(where_str : String) -> String {
+  "select " + QUERY_FIELDS + " \nfrom statement \nwhere \n    " + where_str + " \noffset 0\nlimit 100 \n"
+}
+
+/// $query functor - Generate SQL for multi-pattern query with LOCAL environment.
+/// Form: {$query: condition}
+/// where condition is an AST expression with local operators ($pattern, $and, $*)
 fn query(env : Env, args : Array[JseValue]) -> Result[JseValue, String] {
   if args.length() < 1 {
-    return Err("$query expects [op, patterns array] or [patterns array]")
+    return Err("$query expects a condition expression")
   }
 
-  // args[0] is the entire array: [op, patterns] or [patterns]
-  let raw_value = args[0]
+  // Create LOCAL environment with parent
+  let local_env = new_with_parent(env)
 
-  match raw_value {
-    JseValue::ArrayValue(arr) => {
-      // Extract patterns array
-      let patterns = extract_patterns(arr)
+  // Load LOCAL operators into local scope
+  load(local_env, local_sql_functors())
 
-      // Evaluate each pattern to get SQL string
-      let conditions = Array::new()
-      let mut conditions2 = conditions
-      for pattern in patterns {
-        match eval_json(env, pattern) {
-          Ok(result) => {
-            match result {
-              JseValue::StringValue(sql_str) => {
-                let cond = extract_where_clause(sql_str)
-                conditions2 = array_push(conditions2, cond)
+  // Parse and evaluate in LOCAL environment
+  let parser = parser_new(local_env)
+  match Parser::parse(parser, args[0]) {
+    Ok(ast_node) => {
+      match ast_node {
+        AstNodeEnum::Quote(quote_node) => {
+          // $quote returns its content unevaluated
+          // We need to evaluate it in the local environment
+          let quoted_value = quote_to_json(quote_node)
+          match eval_json(local_env, quoted_value) {
+            Ok(result) => {
+              match result {
+                JseValue::StringValue(where_str) => {
+                  let sql = build_sql(where_str)
+                  Ok(JseValue::StringValue(sql))
+                }
+                _ => Err("query condition must evaluate to string")
               }
-              _ => return Err("pattern must evaluate to SQL string")
             }
+            Err(e) => Err(e)
           }
-          Err(e) => return Err("failed to evaluate pattern: " + e)
         }
-      }
-
-      let where_clause = conditions2.join(" and \n    ")
-      let sql = "select " + QUERY_FIELDS + " \nfrom statement \nwhere \n    " + where_clause + " \noffset 0\nlimit 100 \n"
-      Ok(JseValue::StringValue(sql))
-    }
-    _ => Err("$query expects an array argument")
-  }
-}
-
-fn expr(_env : Env, args : Array[JseValue]) -> Result[JseValue, String] {
-  if args.is_empty() {
-    return Ok(JseValue::NullValue)
-  }
-  Ok(args[0])
-}
-
-/// Extract patterns from array
-/// Handles [op, patterns] or [patterns] format
-fn extract_patterns(arr : Array[JseValue]) -> Array[JseValue] {
-  if arr.is_empty() {
-    return Array::new()
-  }
-
-  match arr.get(0) {
-    Some(JseValue::StringValue(op)) if op == "$and" || op == "$or" => {
-      // This is [op, patterns] format
-      match arr.get(1) {
-        Some(JseValue::ArrayValue(patterns)) => patterns
-        _ => arr
-      }
-    }
-    _ => arr
-  }
-}
-
-/// Extract WHERE clause from SQL
-fn extract_where_clause(sql : String) -> String {
-  // Find "where " in the string
-  let where_str = "where "
-  let mut where_idx = None
-  let mut i = 0
-  while i < sql.length() - where_str.length() + 1 {
-    let mut found = true
-    let mut j = 0
-    while j < where_str.length() {
-      if sql[i + j] != where_str[j] {
-        found = false
-        break
-      }
-      j = j + 1
-    }
-    if found {
-      where_idx = Some(i)
-      break
-    }
-    i = i + 1
-  }
-
-  match where_idx {
-    Some(idx) => {
-      let where_start = idx + 6
-
-      // Find " offset" after where_start
-      let offset_str = " offset"
-      let mut offset_idx = None
-      let mut k = where_start
-      while k < sql.length() - offset_str.length() + 1 {
-        let mut found = true
-        let mut j = 0
-        while j < offset_str.length() {
-          if sql[k + j] != offset_str[j] {
-            found = false
-            break
+        _ => {
+          // Apply the ast_node in local environment
+          match ast_node_enum_apply(ast_node, local_env) {
+            Ok(where_val) => {
+              match where_val {
+                JseValue::StringValue(where_str) => {
+                  let sql = build_sql(where_str)
+                  Ok(JseValue::StringValue(sql))
+                }
+                _ => Err("query condition must evaluate to string")
+              }
+            }
+            Err(e) => Err(ast_error_to_string(e))
           }
-          j = j + 1
         }
-        if found {
-          offset_idx = Some(k - where_start)
-          break
-        }
-        k = k + 1
-      }
-
-      match offset_idx {
-        Some(oidx) => sql
-        None => sql
       }
     }
-    None => sql
+    Err(e) => Err(ast_error_to_string(e))
   }
 }
 
 /// Convert pattern arguments to triple
 fn pattern_to_triple(subject : String, predicate : String, object : String) -> Array[String] {
   if subject == "$*" && object == "$*" {
+    let arr = Array::new()
+    arr.push(predicate)
+    arr
+  } else if subject == "*" && object == "*" {
     let arr = Array::new()
     arr.push(predicate)
     arr
@@ -194,20 +191,8 @@ fn triple_to_sql_condition(triple : Array[String]) -> Result[String, String] {
     Err(e) => return Err(e)
   }
 
-  // Escape single quotes manually
-  let result_chars = Array::new()
-  let mut result_chars2 = result_chars
-  let mut i = 0
-  while i < json_str.length() {
-    let char_str = json_str.substring(start = i, end = i + 1)
-    if char_str == "'" {
-      result_chars2 = array_push(result_chars2, "''")
-    } else {
-      result_chars2 = array_push(result_chars2, char_str)
-    }
-    i = i + 1
-  }
-  let escaped = result_chars2.join("")
+  // Escape single quotes by replacing ' with ''
+  let escaped = json_str.replace(old = "'", new = "''")
   Ok("meta @> '" + escaped + "'")
 }
 

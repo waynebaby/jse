@@ -3,7 +3,7 @@
 /// Utility functors map
 pub fn utils_functors() -> Map[String, Functor] {
   let m = Map::new()
-  let mut m2 = map_put(m, "$not", not)
+  let mut m2 = map_put(m, "$not", not_fn)
   m2 = map_put(m2, "$list?", list_p)
   m2 = map_put(m2, "$map?", map_p)
   m2 = map_put(m2, "$null?", null_p)
@@ -16,7 +16,7 @@ pub fn utils_functors() -> Map[String, Functor] {
   m2
 }
 
-fn not(_env : Env, args : Array[JseValue]) -> Result[JseValue, String] {
+fn not_fn(_env : Env, args : Array[JseValue]) -> Result[JseValue, String] {
   if args.is_empty() {
     return Ok(JseValue::BoolValue(true))
   }
