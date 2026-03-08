@@ -1,16 +1,40 @@
 //! SQL extension functors for JSE.
 //!
-//! Following Python's functors/sql.py pattern:
+//! Following Python's functors/sql.py pattern for demonstrating local scope.
+//! The SQL module ONLY exports $query, which creates a local environment
+//! with local operators ($pattern, $and, $*).
 
 use std::rc::Rc;
 use std::cell::RefCell;
 use serde_json::Value;
 use crate::env::{Env, Functor};
 use crate::ast::AstError;
-use crate::sql::{pattern_to_triple, triple_to_sql_condition};
+use crate::ast::Parser;
 
 pub const QUERY_FIELDS: &str = "subject, predicate, object, meta";
 
+/// Convert $pattern arguments to PostgreSQL jsonb containment triple.
+pub fn pattern_to_triple(subject: &str, predicate: &str, object: &str) -> Vec<String> {
+    if subject == "*" && object == "*" {
+        return vec![predicate.to_string()];
+    }
+    vec![
+        subject.to_string(),
+        predicate.to_string(),
+        object.to_string(),
+    ]
+}
+
+/// Build SQL WHERE clause for a triple pattern.
+pub fn triple_to_sql_condition(triple: &[String]) -> String {
+    let json = serde_json::json!({ "triple": triple });
+    let s = json.to_string();
+    let escaped = s.replace('\'', "''");
+    format!("meta @> '{escaped}'")
+}
+
+/// Generate SQL WHERE condition for a triple pattern.
+/// This is the LOCAL version used inside $query, which expands $* to "*".
 pub fn pattern(env: &Rc<RefCell<Env>>, args: &[Value]) -> Result<Value, AstError> {
     if args.len() < 3 {
         return Err(AstError::ArityError("$pattern requires (subject, predicate, object)".to_string()));
@@ -23,111 +47,84 @@ pub fn pattern(env: &Rc<RefCell<Env>>, args: &[Value]) -> Result<Value, AstError
     let obj = args[2].as_str()
         .ok_or_else(|| AstError::TypeError("$pattern requires string arguments".to_string()))?;
 
+    // For query's local environment, expand $* to "*" for the local scope
     let triple = pattern_to_triple(subj, pred, obj);
     let cond = triple_to_sql_condition(&triple);
 
-    let sql = format!(
-        "select \n    subject, predicate, object, meta \nfrom statement as s \nwhere {} \noffset 0\nlimit 100 \n",
-        cond
-    );
-
-    Ok(Value::String(sql))
+    // Return just the WHERE condition, not a full SELECT
+    Ok(Value::String(cond))
 }
 
-pub fn expr(env: &Rc<RefCell<Env>>, args: &[Value]) -> Result<Value, AstError> {
-    if args.is_empty() {
-        return Ok(Value::Null);
+/// SQL-specific AND: joins conditions with " and ".
+/// This is LOCAL-ONLY for $query, different from logical _and in utils.rs.
+fn and(env: &Rc<RefCell<Env>>, args: &[Value]) -> Result<Value, AstError> {
+    let mut tokens = Vec::new();
+    for arg in args {
+        // Parse and evaluate each argument as an expression
+        let parser = Parser::new(Rc::clone(env));
+        let ast = parser.parse(arg)?;
+        let result = ast.apply(env)?;
+        let sql = result.as_str()
+            .ok_or_else(|| AstError::TypeError("$and arguments must evaluate to strings".to_string()))?;
+        tokens.push(sql.to_string());
     }
-    Ok(args[0].clone())
+    Ok(Value::String(tokens.join(" and ")))
 }
 
-pub fn query(env: &Rc<RefCell<Env>>, args: &[Value]) -> Result<Value, AstError> {
-    if args.len() < 1 {
-        return Err(AstError::ArityError("$query expects [op, patterns array] or [patterns array]".to_string()));
-    }
-
-    // Helper function to evaluate an expression
-    fn eval_expr(env: &Rc<RefCell<Env>>, expr: &Value) -> Result<Value, AstError> {
-        // Re-parse and evaluate the expression
-        let parser = crate::ast::Parser::new(Rc::clone(env));
-        let ast = parser.parse(expr)?;
-        ast.apply(env)
-    }
-
-    // Extract patterns from raw JSON structure
-    // Don't evaluate the top-level array yet
-    let raw_value = &args[0];
-
-    // Check if this is [op, patterns] format or just [patterns]
-    let (patterns_array, has_op) = match raw_value {
-        Value::Array(arr) if !arr.is_empty() => {
-            // Check if first element is an operator
-            if arr[0].is_string() {
-                let s = arr[0].as_str().unwrap();
-                if s.starts_with('$') && s != "$*" && !s.starts_with("$$") && s != "$expr" && s != "$query" && s != "$pattern" {
-                    // This is [op, patterns] format
-                    // Check if it's a logical operator that needs special handling
-                    if s == "$and" || s == "$or" {
-                        // For $and/$or with patterns, the patterns are in the second element
-                        if let Some(patterns) = arr.get(1) {
-                            (patterns, true)
-                        } else {
-                            (raw_value, false)
-                        }
-                    } else {
-                        // Unknown operator - treat whole thing as patterns
-                        (raw_value, false)
-                    }
-                } else {
-                    // First element is not an operator - this is [patterns]
-                    (raw_value, false)
-                }
-            } else {
-                // First element is not a string - this is [patterns]
-                (raw_value, false)
-            }
-        }
-        _ => (raw_value, false),
-    };
-
-    let patterns = patterns_array.as_array()
-        .ok_or_else(|| AstError::TypeError("$query argument must be an array".to_string()))?;
-
-    let mut conditions = Vec::new();
-    for pattern_val in patterns {
-        // Evaluate each pattern expression
-        let sql_val = eval_expr(env, pattern_val)?;
-        let sql = sql_val.as_str()
-            .ok_or_else(|| AstError::TypeError("Pattern must evaluate to SQL string".to_string()))?;
-
-        // Extract WHERE clause
-        let re = regex::RegexBuilder::new(r"where\s+(.+?)\s+offset")
-            .case_insensitive(true)
-            .dot_matches_new_line(true)
-            .build()
-            .map_err(|e| AstError::EvalError(e.to_string()))?;
-
-        let cond = if let Some(cap) = re.captures(sql) {
-            format!("({})", cap.get(1).unwrap().as_str().trim())
-        } else {
-            sql.to_string()
-        };
-        conditions.push(cond);
-    }
-
-    let where_clause = conditions.join(" and \n    ");
-    let sql = format!(
-        "select {} \nfrom statement \nwhere \n    {} \noffset 0\nlimit 100 \n",
-        QUERY_FIELDS, where_clause
-    );
-
-    Ok(Value::String(sql))
+/// Wildcard helper for local scope.
+fn wildcard(_env: &Rc<RefCell<Env>>, _args: &[Value]) -> Result<Value, AstError> {
+    Ok(Value::String("*".to_string()))
 }
 
-pub fn sql_functors() -> std::collections::HashMap<&'static str, Functor> {
+/// Local operators for $query scope only.
+fn local_sql_functors() -> std::collections::HashMap<&'static str, Functor> {
     let mut m = std::collections::HashMap::new();
     m.insert("$pattern", pattern as Functor);
-    m.insert("$expr", expr as Functor);
+    m.insert("$and", and as Functor);
+    m.insert("$*", wildcard as Functor);
+    m
+}
+
+/// Generate SQL for multi-pattern query with LOCAL environment.
+/// Form: [$query, condition]
+/// where condition is an AST expression with local operators ($pattern, $and, $*)
+pub fn query(env: &Rc<RefCell<Env>>, args: &[Value]) -> Result<Value, AstError> {
+    if args.len() < 1 {
+        return Err(AstError::ArityError("$query expects a condition expression".to_string()));
+    }
+
+    // Create LOCAL environment with parent
+    let local = Rc::new(RefCell::new(Env::new_with_parent(Some(Rc::clone(env)))));
+
+    // Load LOCAL operators into local scope
+    local.borrow_mut().load(&local_sql_functors());
+
+    // Create parser with LOCAL environment
+    let parser = Parser::new(Rc::clone(&local));
+
+    // Parse and evaluate in LOCAL environment
+    let ast = parser.parse(&args[0])?;
+    let where_clause = ast.apply(&local)?;
+
+    // Extract the string value from the result
+    let where_str = where_clause.as_str()
+        .ok_or_else(|| AstError::TypeError("Query condition must evaluate to string".to_string()))?;
+
+    // Generate SQL
+    let sql = format!(
+        "select {} \nfrom statement \nwhere \n    {} \noffset 0\nlimit 100 \n",
+        QUERY_FIELDS,
+        where_str
+    );
+
+    Ok(Value::String(sql))
+}
+
+/// SQL module functors - ONLY exports $query.
+/// The local operators ($pattern, $and, $*) are NOT globally available.
+/// They only exist within the local scope created by $query.
+pub fn sql_functors() -> std::collections::HashMap<&'static str, Functor> {
+    let mut m = std::collections::HashMap::new();
     m.insert("$query", query as Functor);
     m
 }

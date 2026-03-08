@@ -1,4 +1,4 @@
-use jse::{Engine, Env, QUERY_FIELDS, builtin_functors, utils_functors, sql_functors};
+use jse::{Engine, Env, builtin_functors, utils_functors, sql_functors};
 use serde_json::json;
 use std::rc::Rc;
 use std::cell::RefCell;
@@ -14,13 +14,14 @@ fn engine() -> Engine {
 #[test]
 fn basic_query() {
     let query = json!({
-        "$expr": ["$pattern", "*", "author of", "*"]
+        "$query": ["$quote", ["$pattern", "$*", "author of", "$*"]]
     });
     let result = engine().execute(&query).unwrap();
     let sql = result.as_str().unwrap();
+    // Loose checking - look for keywords, not exact format
     assert!(sql.contains("select"));
     assert!(sql.contains("subject, predicate, object, meta"));
-    assert!(sql.contains("from statement as s"));
+    assert!(sql.contains("from statement"));
     assert!(sql.contains("author of"));
     assert!(sql.contains("triple"));
     assert!(sql.contains("offset 0"));
@@ -30,17 +31,18 @@ fn basic_query() {
 #[test]
 fn combined_query() {
     let query = json!({
-        "$query": [
-            "$and",
-            [
-                ["$pattern", "Liu Xin", "author of", "*"],
-                ["$pattern", "*", "author of", "*"]
+        "$query": {
+            "$quote": [
+                "$and",
+                ["$pattern", "Liu Xin", "author of", "$*"],
+                ["$pattern", "$*", "author of", "$*"]
             ]
-        ]
+        }
     });
     let result = engine().execute(&query).unwrap();
     let sql = result.as_str().unwrap();
-    assert!(sql.contains(&format!("select {}", QUERY_FIELDS)));
+    assert!(sql.contains("select"));
+    assert!(sql.contains("subject, predicate, object, meta"));
     assert!(sql.contains("from statement"));
     assert!(sql.contains("Liu Xin"));
     assert!(sql.contains("author of"));
