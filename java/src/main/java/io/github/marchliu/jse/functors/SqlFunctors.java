@@ -2,24 +2,19 @@ package io.github.marchliu.jse.functors;
 
 import io.github.marchliu.jse.Env;
 import io.github.marchliu.jse.Functor;
+import io.github.marchliu.jse.Parser;
+import io.github.marchliu.jse.ast.AstNode;
 
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.regex.Matcher;
-import java.util.regex.Pattern;
 
 /**
  * SQL extension functors for JSE.
  *
- * <p>Migrated from the original Sql.java implementation:
- * <ul>
- *   <li>$pattern: Generate SQL for triple pattern matching</li>
- *   <li>$expr: Expression evaluation pass-through</li>
- *   <li>$query: Generate SQL for multi-pattern queries</li>
- * </ul>
- * </p>
+ * <p>Demonstrates local scope: ONLY exports $query globally.
+ * Local operators ($pattern, $and, $*) are ONLY available inside $query's local scope.</p>
  */
 public final class SqlFunctors {
 
@@ -28,12 +23,9 @@ public final class SqlFunctors {
     /** Query field list for SQL SELECT. */
     public static final String QUERY_FIELDS = "subject, predicate, object, meta";
 
-    /** Pattern for extracting WHERE clause from SQL. */
-    private static final Pattern WHERE_PATTERN =
-            Pattern.compile("where\\s+(.+?)\\s+offset", Pattern.CASE_INSENSITIVE | Pattern.DOTALL);
-
     /**
-     * $pattern functor - Generate SQL for triple pattern matching.
+     * $pattern functor - Generate SQL WHERE condition for a triple pattern.
+     * This is the LOCAL version used inside $query.
      * Form: [$pattern, subject, predicate, object]
      */
     public static final Functor PATTERN = (env, args) -> {
@@ -50,62 +42,72 @@ public final class SqlFunctors {
         }
 
         List<String> triple = patternToTriple(s, p, o);
-        String cond = tripleToSqlCondition(triple);
-
-        return "select \n" +
-                "    subject, predicate, object, meta \n" +
-                "from statement as s \n" +
-                "where " + cond + " \n" +
-                "offset 0\n" +
-                "limit 100 \n";
+        return tripleToSqlCondition(triple);
     };
 
     /**
-     * $expr functor - Expression evaluation pass-through.
-     * Form: [$expr, expression] or {$expr: expression}
+     * SQL-specific AND: joins conditions with " and ".
+     * This is LOCAL-ONLY for $query, different from logical $and in UtilsFunctors.
      */
-    public static final Functor EXPR = (env, args) -> {
-        if (args.length == 0) {
-            return null;
+    public static final Functor SQL_AND = (env, args) -> {
+        StringBuilder result = new StringBuilder();
+        for (Object arg : args) {
+            Env envImpl = (Env) env;
+            Object evaluated = envImpl.eval(arg);
+            String sql = (String) evaluated;
+            if (result.length() > 0) {
+                result.append(" and ");
+            }
+            result.append(sql);
         }
-        return env.eval(args[0]);
+        return result.toString();
     };
 
     /**
-     * $query functor - Generate SQL for multi-pattern query.
-     * Form: [$query, op, patterns]
+     * Wildcard helper for local scope.
+     */
+    public static final Functor WILDCARD = (env, args) -> "*";
+
+    /**
+     * Local operators map - NOT exported globally.
+     * Only available inside $query's local scope.
+     */
+    private static final Map<String, Functor> LOCAL_SQL_FUNCTORS;
+
+    static {
+        LOCAL_SQL_FUNCTORS = new LinkedHashMap<>();
+        LOCAL_SQL_FUNCTORS.put("$pattern", PATTERN);
+        LOCAL_SQL_FUNCTORS.put("$and", SQL_AND);
+        LOCAL_SQL_FUNCTORS.put("$*", WILDCARD);
+    }
+
+    /**
+     * $query functor - Generate SQL for multi-pattern query with LOCAL environment.
+     * Form: {$query: condition}
+     * where condition is an AST expression with local operators ($pattern, $and, $*)
      */
     public static final Functor QUERY = (env, args) -> {
-        if (args.length < 2) {
-            throw new IllegalArgumentException("$query expects [op, patterns array]");
+        if (args.length < 1) {
+            throw new IllegalArgumentException("$query expects a condition expression");
         }
 
-        // First arg is operator (currently ignored, assumes "and")
-        Object op = args[0];
-        Object patternsObj = args[1];
+        // Create LOCAL environment with parent
+        Env local = new Env((Env) env);
 
-        if (!(patternsObj instanceof List<?> patterns)) {
-            throw new IllegalArgumentException("$query second argument must be a list");
-        }
+        // Load LOCAL operators into local scope
+        local.load(LOCAL_SQL_FUNCTORS);
 
-        List<String> conditions = new ArrayList<>();
-        for (Object sqlObj : patterns) {
-            if (!(sqlObj instanceof String sql)) {
-                throw new IllegalArgumentException("Pattern must evaluate to SQL string");
-            }
-            Matcher m = WHERE_PATTERN.matcher(sql);
-            if (m.find()) {
-                conditions.add("(" + m.group(1).trim() + ")");
-            } else {
-                conditions.add(sql);
-            }
-        }
+        // Parse and evaluate in LOCAL environment
+        Parser parser = new Parser(local);
+        Object parsed = parser.parse(args[0]);
+        AstNode condition = (AstNode) parsed;
+        Object where = condition.apply(local);
 
-        String whereClause = String.join(" and \n    ", conditions);
+        String whereStr = (String) where;
         return "select " + QUERY_FIELDS + " \n" +
                 "from statement \n" +
                 "where \n" +
-                "    " + whereClause + " \n" +
+                "    " + whereStr + " \n" +
                 "offset 0\n" +
                 "limit 100 \n";
     };
@@ -119,13 +121,13 @@ public final class SqlFunctors {
      */
     public static List<String> patternToTriple(String subject, String predicate, String object) {
         List<String> pattern = new ArrayList<>(3);
-        if (!"*".equals(subject)) {
+        if (!"*".equals(subject) && !"$*".equals(subject)) {
             pattern.add(subject);
         }
-        if (!"*".equals(predicate)) {
+        if (!"*".equals(predicate) && !"$*".equals(predicate)) {
             pattern.add(predicate);
         }
-        if (!"*".equals(object)) {
+        if (!"*".equals(object) && !"$*".equals(object)) {
             pattern.add(object);
         }
         return pattern;
@@ -184,14 +186,13 @@ public final class SqlFunctors {
     }
 
     /**
-     * Dictionary of all SQL functors for registration.
+     * SQL module functors - ONLY exports $query.
+     * The local operators ($pattern, $and, $*) are NOT globally available.
      */
     public static final Map<String, Functor> SQL_FUNCTORS;
 
     static {
         SQL_FUNCTORS = new LinkedHashMap<>();
-        SQL_FUNCTORS.put("$pattern", PATTERN);
-        SQL_FUNCTORS.put("$expr", EXPR);
         SQL_FUNCTORS.put("$query", QUERY);
     }
 }
