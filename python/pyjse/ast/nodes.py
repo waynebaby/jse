@@ -156,7 +156,7 @@ class ExpressionNode(AstNode):
         if functor is None:
             raise NameError(f"Unknown operator: {self._operator}")
 
-        functor.metadata = self._metadata
+        functor.meta = self._metadata
 
         # For object expressions, we need to evaluate the value as arguments
         # If the value is an ArrayNode, we want to evaluate its elements as data,
