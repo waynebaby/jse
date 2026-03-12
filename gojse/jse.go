@@ -16,32 +16,50 @@ type Functor = functors.Functor
 
 // Env represents a JSE execution environment with scope chaining.
 type Env struct {
-	parent   *Env
-	bindings map[string]Value
-	functors map[string]functors.Functor
+	parent      *Env
+	bindings    map[string]Value
+	functors    map[string]functors.Functor
+	currentMeta map[string]interface{} // Metadata context for functor calls
 }
 
 // NewEnv creates a new empty environment.
 func NewEnv() *Env {
 	return &Env{
-		parent:   nil,
-		bindings: make(map[string]Value),
-		functors: make(map[string]functors.Functor),
+		parent:      nil,
+		bindings:    make(map[string]Value),
+		functors:    make(map[string]functors.Functor),
+		currentMeta: make(map[string]interface{}),
 	}
 }
 
 // NewEnvWithParent creates a new environment with a parent (for closures).
 func NewEnvWithParent(parent *Env) *Env {
 	return &Env{
-		parent:   parent,
-		bindings: make(map[string]Value),
-		functors: make(map[string]functors.Functor),
+		parent:      parent,
+		bindings:    make(map[string]Value),
+		functors:    make(map[string]functors.Functor),
+		currentMeta: make(map[string]interface{}),
 	}
 }
 
 // GetParent returns the parent environment.
 func (e *Env) GetParent() *Env {
 	return e.parent
+}
+
+// GetMeta returns the current metadata context.
+func (e *Env) GetMeta() map[string]interface{} {
+	return e.currentMeta
+}
+
+// SetMeta sets the current metadata context (before functor call).
+func (e *Env) SetMeta(meta map[string]interface{}) {
+	e.currentMeta = meta
+}
+
+// ClearMeta clears the current metadata context (after functor call).
+func (e *Env) ClearMeta() {
+	e.currentMeta = make(map[string]interface{})
 }
 
 // Resolve looks up a symbol in the scope chain.

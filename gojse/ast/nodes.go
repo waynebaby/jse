@@ -7,6 +7,13 @@ import (
 	"github.com/MarchLiu/jse/gojse/functors"
 )
 
+// MetaSetter is an interface for setting/clearing metadata context
+// This avoids circular import between ast and jse packages
+type MetaSetter interface {
+	SetMeta(meta map[string]interface{})
+	ClearMeta()
+}
+
 // LiteralNode represents a literal value (numbers, strings, bool, null).
 type LiteralNode struct {
 	value interface{}
@@ -180,15 +187,16 @@ func (n *ObjectNode) GetEnv() interface{} {
 	return n.env
 }
 
-// ObjectExpressionNode represents {"$operator": value}.
+// ObjectExpressionNode represents {"$operator": value, ...}.
 type ObjectExpressionNode struct {
 	operator string
 	value    AstNode
+	metadata map[string]interface{} // Metadata associated with this expression
 	env      interface{}
 }
 
-func NewObjectExpressionNode(operator string, value AstNode, env interface{}) *ObjectExpressionNode {
-	return &ObjectExpressionNode{operator: operator, value: value, env: env}
+func NewObjectExpressionNode(operator string, value AstNode, metadata map[string]interface{}, env interface{}) *ObjectExpressionNode {
+	return &ObjectExpressionNode{operator: operator, value: value, metadata: metadata, env: env}
 }
 
 func (n *ObjectExpressionNode) Apply(env interface{}) (interface{}, error) {
@@ -197,19 +205,36 @@ func (n *ObjectExpressionNode) Apply(env interface{}) (interface{}, error) {
 		return n.value.Apply(env)
 	}
 
-	// Special handling for $pattern and $query - pass unevaluated JSON
+	// Set metadata context before calling functor
+	if metaSetter, ok := env.(MetaSetter); ok {
+		metaSetter.SetMeta(n.metadata)
+	}
+
+	var result interface{}
+	var resultErr error
 	if n.operator == "$pattern" || n.operator == "$query" {
+		// Special handling for $pattern and $query - pass unevaluated JSON
 		jsonValue := n.value.ToJSON()
-		return n.applyFunctor(env, n.operator, []interface{}{jsonValue})
+		result, resultErr = n.applyFunctor(env, n.operator, []interface{}{jsonValue})
+	} else {
+		// For other operators, evaluate and apply
+		evaluated, err := n.value.Apply(env)
+		if err != nil {
+			// Clear metadata context on error
+			if metaSetter, ok := env.(MetaSetter); ok {
+				metaSetter.ClearMeta()
+			}
+			return nil, err
+		}
+		result, resultErr = n.applyFunctor(env, n.operator, []interface{}{evaluated})
 	}
 
-	// For other operators, evaluate and apply
-	evaluated, err := n.value.Apply(env)
-	if err != nil {
-		return nil, err
+	// Clear metadata context after functor call
+	if metaSetter, ok := env.(MetaSetter); ok {
+		metaSetter.ClearMeta()
 	}
 
-	return n.applyFunctor(env, n.operator, []interface{}{evaluated})
+	return result, resultErr
 }
 
 func (n *ObjectExpressionNode) applyFunctor(env interface{}, symbol string, args []interface{}) (interface{}, error) {
@@ -221,7 +246,12 @@ func (n *ObjectExpressionNode) applyFunctor(env interface{}, symbol string, args
 }
 
 func (n *ObjectExpressionNode) ToJSON() interface{} {
-	return map[string]interface{}{n.operator: n.value.ToJSON()}
+	result := map[string]interface{}{n.operator: n.value.ToJSON()}
+	// Include metadata in JSON representation
+	for k, v := range n.metadata {
+		result[k] = v
+	}
+	return result
 }
 
 func (n *ObjectExpressionNode) GetEnv() interface{} {

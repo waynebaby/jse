@@ -64,7 +64,16 @@ func (p *Parser) parseObject(obj map[string]interface{}) (AstNode, error) {
 		if err != nil {
 			return nil, err
 		}
-		return NewObjectExpressionNode(sym, valueNode, p.env), nil
+
+		// 提取 metadata（非 operator 的其他 key)
+		metadata := make(map[string]interface{})
+		for k, v := range obj {
+			if k != sym {
+				metadata[k] = v
+			}
+		}
+
+		return NewObjectExpressionNode(sym, valueNode, metadata, p.env), nil
 	}
 
 	// Regular object
