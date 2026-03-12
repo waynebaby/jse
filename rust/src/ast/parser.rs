@@ -91,11 +91,18 @@ impl Parser {
                 return Ok(Box::new(QuoteNode::new(value, Rc::clone(&self.env))));
             }
 
+            // Extract metadata (non-operator keys)
+            let metadata: HashMap<String, Value> = obj.iter()
+                .filter(|(k, _)| *k != operator)
+                .map(|(k, v)| (k.clone(), v.clone()))
+                .collect();
+
             // Object expression
             let value = self.parse(obj.get(operator).unwrap())?;
             return Ok(Box::new(ObjectExpressionNode::new(
                 operator.clone(),
                 value,
+                metadata,
                 Rc::clone(&self.env)
             )));
         }

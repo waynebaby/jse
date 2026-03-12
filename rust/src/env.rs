@@ -20,6 +20,8 @@ pub struct Env {
     parent: Option<Rc<RefCell<Env>>>,
     bindings: HashMap<String, Value>,
     functor_map: HashMap<String, Functor>,
+    /// Metadata context for functor calls
+    current_meta: HashMap<String, Value>,
 }
 
 impl Env {
@@ -43,6 +45,7 @@ impl Env {
             parent: None,
             bindings: HashMap::new(),
             functor_map: HashMap::new(),
+            current_meta: HashMap::new(),
         }
     }
 
@@ -52,12 +55,28 @@ impl Env {
             parent,
             bindings: HashMap::new(),
             functor_map: HashMap::new(),
+            current_meta: HashMap::new(),
         }
     }
 
     /// Get the parent environment
     pub fn get_parent(&self) -> Option<Rc<RefCell<Env>>> {
         self.parent.as_ref().map(Rc::clone)
+    }
+
+    /// Get the current metadata context
+    pub fn get_meta(&self) -> &HashMap<String, Value> {
+        &self.current_meta
+    }
+
+    /// Set the current metadata context (before functor call)
+    pub fn set_meta(&mut self, meta: HashMap<String, Value>) {
+        self.current_meta = meta;
+    }
+
+    /// Clear the current metadata context (after functor call)
+    pub fn clear_meta(&mut self) {
+        self.current_meta.clear();
     }
 
     /// Resolve symbol to value by searching up the scope chain
@@ -193,6 +212,7 @@ impl Clone for Env {
             parent: self.parent.as_ref().map(Rc::clone),
             bindings: self.bindings.clone(),
             functor_map: self.functor_map.clone(),
+            current_meta: self.current_meta.clone(),
         }
     }
 }

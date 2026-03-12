@@ -215,16 +215,23 @@ impl AstNode for ObjectNode {
     }
 }
 
-/// Object expression node ({"$operator": value})
+/// Object expression node ({"$operator": value, "meta": ...})
 pub struct ObjectExpressionNode {
     operator: String,
     value: Box<dyn AstNode>,
+    /// Metadata associated with this expression
+    metadata: HashMap<String, Value>,
     env: Rc<RefCell<Env>>,
 }
 
 impl ObjectExpressionNode {
-    pub fn new(operator: String, value: Box<dyn AstNode>, env: Rc<RefCell<Env>>) -> Self {
-        Self { operator, value, env }
+    pub fn new(
+        operator: String,
+        value: Box<dyn AstNode>,
+        metadata: HashMap<String, Value>,
+        env: Rc<RefCell<Env>>
+    ) -> Self {
+        Self { operator, value, metadata, env }
     }
 }
 
@@ -239,21 +246,40 @@ impl AstNode for ObjectExpressionNode {
             return self.value.apply(env);
         }
 
-        // Special handling for $pattern and $query
-        // Pass unevaluated JSON for these operators
-        if self.operator == "$pattern" || self.operator == "$query" {
-            let json_value = self.value.to_json();
-            return env.borrow().apply_functor_values(&self.operator, &[json_value]);
+        // Set metadata context before calling functor
+        // Use a separate scope to ensure borrow is dropped
+        {
+            let mut env_mut = env.borrow_mut();
+            env_mut.set_meta(self.metadata.clone());
         }
 
-        // For other operators, evaluate and apply as functor
-        let evaluated = self.value.apply(env)?;
-        env.borrow().apply_functor_values(&self.operator, &[evaluated])
+        let result = if self.operator == "$pattern" || self.operator == "$query" {
+            // Special handling for $pattern and $query
+            // Pass unevaluated JSON for these operators
+            let json_value = self.value.to_json();
+            env.borrow().apply_functor_values(&self.operator, &[json_value])
+        } else {
+            // For other operators, evaluate and apply as functor
+            let evaluated = self.value.apply(env)?;
+            env.borrow().apply_functor_values(&self.operator, &[evaluated])
+        };
+
+        // Clear metadata context after functor call
+        {
+            let mut env_mut = env.borrow_mut();
+            env_mut.clear_meta();
+        }
+
+        result
     }
 
     fn to_json(&self) -> Value {
         let mut map = Map::new();
         map.insert(self.operator.clone(), self.value.to_json());
+        // Include metadata in JSON representation
+        for (key, value) in &self.metadata {
+            map.insert(key.clone(), value.clone());
+        }
         Value::Object(map)
     }
 }

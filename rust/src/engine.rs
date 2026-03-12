@@ -83,7 +83,8 @@ impl Engine {
         let ast = self.parser.parse(expr)?;
 
         // Evaluate using environment (delegates to ast.apply())
-        self.env.borrow().eval(ast.as_ref(), &self.env).map_err(JseError::from)
+        // Note: We call apply directly to avoid borrow conflicts
+        ast.apply(&self.env).map_err(JseError::from)
     }
 
     /// Get a reference to the environment.
