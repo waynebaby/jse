@@ -223,11 +223,12 @@ pub fn object_to_json(node : ObjectNode) -> JseValue {
 pub struct ObjectExpressionNode {
   operator : String
   value : AstNodeEnum
+  metadata : Map[String, JseValue]  // 新增: metadata 字段
   env : Env
 }
 
-pub fn object_expression_new(operator : String, value : AstNodeEnum, env : Env) -> ObjectExpressionNode {
-  { operator, value, env }
+pub fn object_expression_new(operator : String, value : AstNodeEnum, metadata : Map[String, JseValue], env : Env) -> ObjectExpressionNode {
+  { operator, value, metadata, env }
 }
 
 pub fn object_expression_get_env(node : ObjectExpressionNode) -> Env {
@@ -239,27 +240,46 @@ pub fn object_expression_apply(node : ObjectExpressionNode, env : Env) -> Result
     return ast_node_enum_apply(node.value, env)
   }
 
-  if node.operator == "$pattern" || node.operator == "$query" {
-    let json_value = ast_node_enum_to_json(node.value)
-    let args = Array::new()
-    let args2 = array_push(args, json_value)
-    return object_expression_apply_functor(env, node.operator, args2)
+  // Set meta context before calling functor
+  set_meta(env, node.metadata)
+
+  let result = {
+    if node.operator == "$pattern" || node.operator == "$query" {
+      let json_value = ast_node_enum_to_json(node.value)
+      let args = Array::new()
+      let args2 = array_push(args, json_value)
+      object_expression_apply_functor(env, node.operator, args2)
+    } else {
+      match ast_node_enum_apply(node.value, env) {
+        Ok(evaluated) => {
+          let args = Array::new()
+          let args2 = array_push(args, evaluated)
+          object_expression_apply_functor(env, node.operator, args2)
+        }
+        Err(e) => Err(e)
+      }
+    }
   }
 
-  match ast_node_enum_apply(node.value, env) {
-    Ok(evaluated) => {
-      let args = Array::new()
-      let args2 = array_push(args, evaluated)
-      object_expression_apply_functor(env, node.operator, args2)
-    }
-    Err(e) => Err(e)
-  }
+  // Clear meta context after functor call
+  clear_meta(env)
+
+  result
 }
 
 pub fn object_expression_to_json(node : ObjectExpressionNode) -> JseValue {
   let obj = Map::new()
   let obj2 = map_put(obj, node.operator, ast_node_enum_to_json(node.value))
-  JseValue::ObjectValue(obj2)
+  // Include metadata in JSON representation
+  let keys = node.metadata.keys()
+  let mut obj3 = obj2
+  for key in keys {
+    match node.metadata.get(key) {
+      Some(v) => obj3 = map_put(obj3, key, v)
+      None => ()
+    }
+  }
+  JseValue::ObjectValue(obj3)
 }
 
 fn object_expression_apply_functor(env : Env, symbol : String, args : Array[JseValue]) -> Result[JseValue, AstError] {

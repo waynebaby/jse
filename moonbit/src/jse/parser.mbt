@@ -13,8 +13,17 @@ pub fn parser_new(env : Env) -> Parser {
 /// Parse a JSON value into an AST node
 pub fn Parser::parse(self : Parser, value : JseValue) -> Result[AstNodeEnum, AstError] {
   match value {
-    JseValue::NullValue | JseValue::BoolValue(_) | JseValue::NumberValue(_) | JseValue::StringValue(_) => {
+    JseValue::NullValue | JseValue::BoolValue(_) | JseValue::NumberValue(_) => {
       Ok(AstNodeEnum::Literal(literal_new(value, self.env)))
+    }
+
+    JseValue::StringValue(s) => {
+      // Strings starting with $ are symbols (but not $$ escaped strings)
+      if s.has_prefix("$") && !s.has_prefix("$$") && s != "$*" {
+        Ok(AstNodeEnum::Symbol(symbol_new(s, self.env)))
+      } else {
+        Ok(AstNodeEnum::Literal(literal_new(value, self.env)))
+      }
     }
 
     JseValue::ArrayValue(arr) => {
@@ -48,8 +57,21 @@ fn Parser::parse_object(self : Parser, obj : Map[String, JseValue]) -> Result[As
         None => JseValue::NullValue
       }
 
+      // Extract metadata (non-operator keys)
+      let metadata = Map::new()
+      let mut metadata2 = metadata
+      let keys = obj.keys()
+      for key in keys {
+        if key != sym {
+          match obj.get(key) {
+            Some(v) => metadata2 = map_put(metadata2, key, v)
+            None => ()
+          }
+        }
+      }
+
       match Parser::parse(self, value) {
-        Ok(node) => Ok(AstNodeEnum::ObjectExpression(object_expression_new(sym, node, self.env)))
+        Ok(node) => Ok(AstNodeEnum::ObjectExpression(object_expression_new(sym, node, metadata2, self.env)))
         Err(e) => Err(e)
       }
     }
@@ -76,18 +98,21 @@ fn Parser::parse_object(self : Parser, obj : Map[String, JseValue]) -> Result[As
 
 /// Get the S-expression key from an object
 /// Returns Some(key) if object has a single key starting with $
+/// (other keys are treated as metadata)
 fn get_s_expr_key(obj : Map[String, JseValue]) -> String? {
   let keys = obj.keys()
   let keys_arr = keys.to_array()
 
-  if keys_arr.length() == 1 {
-    let key = keys_arr[0]
-    if key.has_prefix("$") {
-      Some(key)
-    } else {
-      None
+  // Find the first key starting with $
+  let mut found : String? = None
+  for key in keys_arr {
+    if key.has_prefix("$") && !key.has_prefix("$$") {
+      match found {
+        None => found = Some(key)
+        Some(_) => return None  // Multiple $ keys - not an expression
+      }
     }
-  } else {
-    None
   }
+
+  found
 }

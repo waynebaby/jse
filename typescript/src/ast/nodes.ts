@@ -190,11 +190,19 @@ export class ObjectExpressionNode extends AstNode {
       args = [env.eval(this._value)];
     }
 
-    // Call the functor
-    if (typeof functor === "function") {
-      return (functor as Functor)(env, ...args);
+    // Set metadata context before calling functor
+    env.setMeta(this._metadata);
+
+    try {
+      // Call the functor
+      if (typeof functor === "function") {
+        return (functor as Functor)(env, ...args);
+      }
+      return functor;
+    } finally {
+      // Clear metadata context after functor call
+      env.clearMeta();
     }
-    return functor;
   }
 }
 

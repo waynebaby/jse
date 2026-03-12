@@ -16,10 +16,12 @@ import type { JseValue, AstNodeLike } from "./types.js";
 export class Env {
   private _parent: Env | null;
   private _bindings: Map<string, JseValue>;
+  private _currentMeta: Record<string, JseValue>;
 
   constructor(parent: Env | null = null) {
     this._parent = parent;
     this._bindings = new Map();
+    this._currentMeta = {};
   }
 
   /**
@@ -27,6 +29,27 @@ export class Env {
    */
   getParent(): Env | null {
     return this._parent;
+  }
+
+  /**
+   * Get current metadata context.
+   */
+  getMeta(): Record<string, JseValue> {
+    return this._currentMeta;
+  }
+
+  /**
+   * Set current metadata context (before functor call).
+   */
+  setMeta(meta: Record<string, JseValue>): void {
+    this._currentMeta = meta;
+  }
+
+  /**
+   * Clear current metadata context (after functor call).
+   */
+  clearMeta(): void {
+    this._currentMeta = {};
   }
 
   /**

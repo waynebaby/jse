@@ -15,6 +15,9 @@ public class Env {
 
     private final Env parent;
     private final Map<String, Object> bindings;
+    private Map<String, Object> currentMeta;  // 新增: meta 上下文
+
+    private static final Map<String, Object> EMPTY_META = new LinkedHashMap<>();
 
     /**
      * Create a new environment with no parent.
@@ -31,6 +34,7 @@ public class Env {
     public Env(Env parent) {
         this.parent = parent;
         this.bindings = new LinkedHashMap<>();
+        this.currentMeta = EMPTY_META;
     }
 
     /**
@@ -40,6 +44,31 @@ public class Env {
      */
     public Env getParent() {
         return parent;
+    }
+
+    /**
+     * Get the current metadata context.
+     *
+     * @return Current metadata map
+     */
+    public Map<String, Object> getMeta() {
+        return this.currentMeta;
+    }
+
+    /**
+     * Set the current metadata context (before functor call).
+     *
+     * @param meta Metadata to set
+     */
+    public void setMeta(Map<String, Object> meta) {
+        this.currentMeta = meta != null ? meta : EMPTY_META;
+    }
+
+    /**
+     * Clear the current metadata context (after functor call).
+     */
+    public void clearMeta() {
+        this.currentMeta = EMPTY_META;
     }
 
     /**

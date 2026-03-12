@@ -16,6 +16,31 @@ pub enum JseValue {
   ObjectValue(Map[String, JseValue])
 }
 
+/// Helper functions for creating JseValue (for testing)
+pub fn jse_null() -> JseValue {
+  JseValue::NullValue
+}
+
+pub fn jse_bool(b : Bool) -> JseValue {
+  JseValue::BoolValue(b)
+}
+
+pub fn jse_number(n : Int) -> JseValue {
+  JseValue::NumberValue(n)
+}
+
+pub fn jse_string(s : String) -> JseValue {
+  JseValue::StringValue(s)
+}
+
+pub fn jse_array(arr : Array[JseValue]) -> JseValue {
+  JseValue::ArrayValue(arr)
+}
+
+pub fn jse_object(obj : Map[String, JseValue]) -> JseValue {
+  JseValue::ObjectValue(obj)
+}
+
 /// Functor type - a function that takes environment and arguments
 pub type Functor = (Env, Array[JseValue]) -> Result[JseValue, String]
 
@@ -24,21 +49,37 @@ pub struct Env {
   parent : Env?
   bindings : Map[String, JseValue]
   functors : Map[String, Functor]
+  currentMeta : Ref[Map[String, JseValue]]  // 新增: 使用 Ref 实现可变性
 }
 
 /// Create a new empty environment
 pub fn new() -> Env {
-  { parent: None, bindings: Map::new(), functors: Map::new() }
+  { parent: None, bindings: Map::new(), functors: Map::new(), currentMeta: Ref::new(Map::new()) }
 }
 
 /// Create a new environment with a parent (for closures)
 pub fn new_with_parent(parent : Env) -> Env {
-  { parent: Some(parent), bindings: Map::new(), functors: Map::new() }
+  { parent: Some(parent), bindings: Map::new(), functors: Map::new(), currentMeta: Ref::new(Map::new()) }
 }
 
 /// Get parent environment
 pub fn get_parent(env : Env) -> Env? {
   env.parent
+}
+
+/// Get current metadata context
+pub fn get_meta(env : Env) -> Map[String, JseValue] {
+  env.currentMeta.val
+}
+
+/// Set current metadata context (before functor call)
+pub fn set_meta(env : Env, meta : Map[String, JseValue]) -> Unit {
+  env.currentMeta.val = meta
+}
+
+/// Clear current metadata context (after functor call)
+pub fn clear_meta(env : Env) -> Unit {
+  env.currentMeta.val = Map::new()
 }
 
 /// Resolve symbol to value by searching up the scope chain

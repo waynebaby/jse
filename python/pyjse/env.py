@@ -20,6 +20,7 @@ class Env:
     Attributes:
         _parent: Parent environment for scope chain (nullable)
         _bindings: Local symbol bindings
+        _current_meta: Current metadata context for functor calls
     """
 
     def __init__(self, parent: Optional['Env'] = None) -> None:
@@ -31,10 +32,31 @@ class Env:
         """
         self._parent: Optional[Env] = parent
         self._bindings: dict[str, JseValue] = {}
+        self._current_meta: dict[str, JseValue] = {}
 
     def get_parent(self) -> Optional['Env']:
         """Get parent environment."""
         return self._parent
+
+    def get_meta(self) -> dict[str, JseValue]:
+        """Get current metadata context.
+
+        Returns:
+            Current metadata dictionary
+        """
+        return self._current_meta
+
+    def set_meta(self, meta: dict[str, JseValue] | None) -> None:
+        """Set current metadata context (before functor call).
+
+        Args:
+            meta: Metadata dictionary to set
+        """
+        self._current_meta = meta if meta is not None else {}
+
+    def clear_meta(self) -> None:
+        """Clear current metadata context (after functor call)."""
+        self._current_meta = {}
 
     def resolve(self, symbol: str) -> JseValue | None:
         """Resolve symbol to value by searching up the scope chain.

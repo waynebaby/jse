@@ -156,31 +156,37 @@ class ExpressionNode(AstNode):
         if functor is None:
             raise NameError(f"Unknown operator: {self._operator}")
 
-        functor.meta = self._metadata
+        # Set metadata context before calling functor
+        env.set_meta(self._metadata)
+        try:
+            # For object expressions, we need to evaluate the value as arguments
+            # If the value is an ArrayNode, we want to evaluate its elements as data,
+            # NOT as a function call (which ArrayNode.apply() would do)
+            from .nodes import ArrayNode
 
-        # For object expressions, we need to evaluate the value as arguments
-        # If the value is an ArrayNode, we want to evaluate its elements as data,
-        # NOT as a function call (which ArrayNode.apply() would do)
-        from .nodes import ArrayNode
-
-        if self._operator == "$quote":
-            return self._value
-        elif self._operator == "$expr":
-            # $expr evaluates the whole expression and returns the result
-            args = [env.eval(self._value)]
-        elif isinstance(self._value, ArrayNode):
-            # Get the elements of the array node
-            elements = self._value._elements
-            # Evaluate each element as data (not as function calls)
-            args = [_deep_eval(env, elem) for elem in elements]
-        else:
-            # For other types, just evaluate normally
-            args = env.eval(self._value)
-
-        # Call the functor
-        if callable(functor):
-            return functor(env, *args)
-        return functor
+            if self._operator == "$quote":
+                return self._value
+            elif self._operator == "$expr":
+                # $expr evaluates the whole expression and returns the result
+                args = [env.eval(self._value)]
+            elif isinstance(self._value, ArrayNode):
+                # Get the elements of the array node
+                elements = self._value._elements
+                # Evaluate each element as data (not as function calls)
+                args = [_deep_eval(env, elem) for elem in elements]
+            else:
+                # For other types, just evaluate normally
+                args = env.eval(self._value)
+            # Ensure args is always a list for unpacking
+            if not isinstance(args, list):
+                args = [args]
+            # Call the functor
+            if callable(functor):
+                return functor(env, *args)
+            return functor
+        finally:
+            # Clear metadata context after functor call
+            env.clear_meta()
 
 
 def _deep_eval(env: 'Env', value: JseValue) -> JseValue:

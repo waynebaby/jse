@@ -115,7 +115,34 @@
         }
       },
       "wbtest-files": {},
-      "test-files": {},
+      "test-files": {
+        "/Users/mars/jobs/jse/moonbit/src/jse/basic_test.mbt": {
+          "backend": [
+            "Wasm",
+            "WasmGC",
+            "Js",
+            "Native",
+            "LLVM"
+          ],
+          "optlevel": [
+            "Release",
+            "Debug"
+          ]
+        },
+        "/Users/mars/jobs/jse/moonbit/src/jse/logic_test.mbt": {
+          "backend": [
+            "Wasm",
+            "WasmGC",
+            "Js",
+            "Native",
+            "LLVM"
+          ],
+          "optlevel": [
+            "Release",
+            "Debug"
+          ]
+        }
+      },
       "mbt-md-files": {},
       "deps": [
         {

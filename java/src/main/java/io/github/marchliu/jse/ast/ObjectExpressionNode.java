@@ -90,11 +90,18 @@ public final class ObjectExpressionNode extends AstNode {
         }
 
 
-        // Call the functor
-        if (resolved instanceof Functor functor) {
-            return functor.apply(callEnv, args);
+        // Set meta context before calling functor
+        callEnv.setMeta(this.metadata);
+        try {
+            // Call the functor
+            if (resolved instanceof Functor functor) {
+                return functor.apply(callEnv, args);
+            }
+            return resolved;
+        } finally {
+            // Clear meta context after functor call
+            callEnv.clearMeta();
         }
-        return resolved;
     }
 
     /**

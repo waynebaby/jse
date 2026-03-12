@@ -12,6 +12,11 @@
     },
     {
       "root": "moonbitlang/core",
+      "rel": "argparse",
+      "artifact": "/Users/mars/.moon/lib/core/_build/wasm-gc/release/bundle/argparse/argparse.mi"
+    },
+    {
+      "root": "moonbitlang/core",
       "rel": "array",
       "artifact": "/Users/mars/.moon/lib/core/_build/wasm-gc/release/bundle/array/array.mi"
     },
